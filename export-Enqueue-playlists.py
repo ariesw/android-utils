@@ -9,8 +9,10 @@ import shutil
 
 db_file = '/Users/chadn/Library/Application Support/Enqueue/Enqueue.db'
 out_dir = 'playlists/'
+erase_files_not_needed = False
 
 skip_playlists   = ('Music', 'Now Playing', 'Duplicate Files', 'Missing Files')
+number_errors    = 0
 conn             = sqlite3.connect(db_file)
 conn.row_factory = sqlite3.Row # allows dictionary access, row['col_name']
 
@@ -19,6 +21,8 @@ def main():
 	playlists_info = readDB()
 	print pprint.pprint(playlists_info)
 	writeFiles(playlists_info)
+
+
 
 def readDB():
 	playlists_info = {}
@@ -55,15 +59,20 @@ def makeUnique(dictionary, key, suffix=None):
 		return makeUnique(dictionary, key, suffix)
 
 def writeFiles(playlists_info):
+	global number_errors
+	songs2copy = []
+	files_needed = []
+	copied_bytes = 0
+	needed_bytes = 0
+	not_needed_bytes = 0
+	existing_files = os.listdir(out_dir)
 	'''
 	#EXTM3U - header - must be first line of file
 	#EXTINF - extra info - length (seconds), artist - title
 	#EXTINF:157,Zee Avi - Bitter Heart
 	bitter_heart.mp3
 	'''
-	songs2copy = []
-	copied_files = []
-	existing_files = os.listdir(out_dir)
+	# create playlists (m3u files)
 	for playlist_name in playlists_info.keys():
 		songs = playlists_info[playlist_name]
 		m3u_fn = playlist_name + '.m3u'
@@ -75,22 +84,31 @@ def writeFiles(playlists_info):
 			m3u_text += getFilename(song['path']) + "\n\n"
 			songs2copy.append( song['path'] )
 		#print m3u_text
-		f = open(out_dir + m3u_fn, 'w')
-		f.write(m3u_text)
-		f.close()
-		copied_files.append(m3u_fn)
+		try:
+			f = open(out_dir + m3u_fn, 'w')
+			f.write(m3u_text)
+			f.close()
+			copied_bytes += getFileBytes( out_dir + m3u_fn )
+			files_needed.append(m3u_fn)
+		except Exception,e:
+			number_errors += 1
+			print "Error: "+ str(e)
 
-	# m3u files are written, now copy all necessary files
+	# m3u files are written, now copy all necessary audio files
 	for remote_path in songs2copy:
 		local_fn = getFilename(remote_path)
+		files_needed.append(local_fn)
+
+		copied_bytes += getFileBytes( out_dir + local_fn )
+
 		if local_fn in existing_files:
 			print "Not copying, already exists: " + out_dir + local_fn
 			continue
 		remote_fn = convertPath(remote_path)
 		print "    Copying file from: " + remote_fn
 		print "    Copying file to  : " + out_dir + local_fn + "\n"
-		shutil.copy2(remote_fn, out_dir + local_fn) # copy2 preserves modification time, etc
-		copied_files.append(local_fn)
+		#shutil.copy2(remote_fn, out_dir + local_fn) # copy2 preserves modification time, etc
+		#copied_bytes += getFileBytes( out_dir + local_fn )
 		'''
 		remote_fo = urllib2.urlopen(path)
 		with open(out_dir + local_fn, 'wb') as local_fo:
@@ -100,25 +118,70 @@ def writeFiles(playlists_info):
 
 	# now remove files out_dir no longer used
 	for fn in existing_files:
-		if fn in copied_files:
+		if fn in files_needed:
+			needed_bytes += getFileBytes( out_dir + fn )
+			print "File is needed: " + out_dir + fn
 			continue
 		#full_file_name = os.path.join(out_dir, local_fn)
 	    #if (os.path.isfile(full_file_name)):
-		print "TODO: Delete file no longer referenced: " + out_dir + fn
+		not_needed_bytes += getFileBytes( out_dir + fn )
+		if erase_files_not_needed:
+			print "TODO: Deleting file no longer needed: " + out_dir + fn
 
-	
+	print "Now there is %s MB needed, and copied %s MB." % (getMB(needed_bytes), getMB(copied_bytes))
+	if erase_files_not_needed:
+		print "Erased %s MB no longer needed." % getMB(not_needed_bytes)
+	else:
+		print "Could have erased %s MB no longer needed." % getMB(not_needed_bytes)
+	print "Done.  %s error(s)." % number_errors
+
 def getFilename(path):
+	global number_errors
 	fn = re.sub(r'.*\/', '', path)
 	fn = re.sub(r'%20','_', fn)
 	# todo: add to file name something to guarantee file name is unique, like
 	# size in bytes, modification time, or better yet - sha1 hash of file
+	unique_str = '00'
+	try:
+		statinfo = os.stat( convertPath(path) )
+		unique_str = str(statinfo.st_size) # size in bytes is fast and good enough for now
+		#unique_str = base36(statinfo.st_size) 
+		#print "SIZE: bytes: %d, str: %s\n" % (statinfo.st_size, base36(statinfo.st_size))
+	except OSError, e:
+		number_errors += 1
+		print "Error: "+ str(e)
+	fn = re.sub(r'^(.*)(\.[^\.]+)$',\
+		lambda m: "%s_%s%s" % (m.group(1), unique_str, m.group(2)), fn)
 	return fn
 
 # converts 
 def convertPath(path):
-	fn = re.sub(r'%20','_', path)
+	fn = re.sub(r'%20',' ', path)
 	fn = re.sub(r'^file://localhost(.*)$',r'\1', fn)
 	return fn
+
+def getFileBytes(fn):
+	global number_errors
+	bytes = 0
+	try:
+		statinfo = os.stat( fn )
+		bytes = statinfo.st_size
+	except OSError, e:
+		number_errors += 1
+		print "Error: "+ str(e)
+	return bytes
+
+def getMB(int_x):
+	return str(round( int_x / (1024*1024), 1))
+	
+def base36(int_x):
+	BASE36 = '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ' 
+	base36_x = ''
+	while int_x >= 36:
+	    div, mod = divmod(int_x, 36)
+	    base36_x = BASE36[mod] + base36_x
+	    int_x = int(div)
+	return BASE36[int_x] + base36_x
 
 main()
 
