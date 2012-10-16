@@ -1,14 +1,15 @@
 #!/usr/bin/env python
+# coding=utf-8
 import sys
 import os
 import optparse
 import sqlite3
-import pprint
 import re
 import datetime
 import time
-#import urllib2
 import shutil
+import urllib
+import urlparse
 
 DB_FILE      = os.path.expanduser('~/Library/Application Support/Enqueue/Enqueue.db')
 OUTPUT_DIR   = 'playlists/'
@@ -184,13 +185,14 @@ class EnqueueWrapper(object):
 				self.songs2copy.append( song['path'] )
 			try:
 				f = open(self.output_dir + m3u_fn, 'w')
-				f.write(m3u_text)
+				f.write(m3u_text.encode('utf-8')) # encode from unicode to type str
 				f.close()
 				self.copied_bytes += self.getFileBytes( self.output_dir + m3u_fn )
 				self.files_needed.append(m3u_fn)
 			except Exception,e:
 				self.number_errors += 1
-				print "Error: "+ str(e)
+				print "M3U Error: "+ str(e)
+				print "m3u_fn: %s \n" % m3u_fn
 
 
 	def copySongs(self):
@@ -233,7 +235,8 @@ class EnqueueWrapper(object):
 
 	def getFilename(self, path):
 		fn = re.sub(r'.*\/', '', path)
-		fn = re.sub(r'%20','_', fn)
+		fn = urllib.unquote(fn)
+		#fn = re.sub(r'%20','_', fn)
 		# todo: add to file name something to guarantee file name is unique, like
 		# size in bytes, modification time, or better yet - sha1 hash of file
 		unique_str = '00'
@@ -244,7 +247,8 @@ class EnqueueWrapper(object):
 			#print "SIZE: bytes: %d, str: %s\n" % (statinfo.st_size, base36(statinfo.st_size))
 		except OSError, e:
 			self.number_errors += 1
-			print "Error: "+ str(e)
+			print "OS Error: "+ str(e)
+			
 		fn = re.sub( r'^(.*)(\.[^\.]+)$', \
 			lambda m: "%s_%s%s" % (m.group(1), unique_str, m.group(2)), fn)
 		return fn
@@ -252,11 +256,22 @@ class EnqueueWrapper(object):
 
 	# converts 
 	def convertPath(self, path):
-		fn = re.sub(r'%20',' ', path)
-		fn = re.sub(r'^file://localhost(.*)$',r'\1', fn)
+		p = urlparse.urlparse(path)
+		if not p.scheme == 'file':
+			self.number_errors += 1
+			print "\nWARNING: FIX convertPath: "+ path
+		#fn = urllib.url2pathname(p.path)  # does not convert as expected
+		fn = urllib.url2pathname(p.path).encode('latin-1') # does work
+		#print "convertPath() Orig path: %s" % path
+		#print "convertPath() New path (%s): %s\n" % (type(fn), fn)
 		return fn
 
 
+	def filesafe(self, name):
+		# no / or \ allowed in name
+		name = re.sub(r'(/|\\)', '-', name)  
+		return name
+		
 	def getFileBytes(self, fn):
 		bytes = 0
 		try:
@@ -295,7 +310,7 @@ class EnqueueWrapper(object):
 				continue
 			cur_playlist = []
 			#print "==> "+ row['title']
-			playlist_name = self._makeUnique(self.playlists_info, row['title'])
+			playlist_name = self._makeUnique(self.playlists_info, self.filesafe(row['title']))
 			c2 = conn.cursor()
 			for items in c2.execute("SELECT * FROM playlist_items WHERE playlist_id='%d' ORDER BY playlist_index" % row['playlist_id']):
 				c3 = conn.cursor()
