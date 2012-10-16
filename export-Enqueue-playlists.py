@@ -10,9 +10,11 @@ import time
 import shutil
 import urllib
 import urlparse
+import pprint
+import traceback
 
 DB_FILE      = os.path.expanduser('~/Library/Application Support/Enqueue/Enqueue.db')
-OUTPUT_DIR   = 'playlists/'
+DESTINATION_DIR   = 'playlists/'
 PLAYLISTS_FN = 'playlists.txt'
 
 
@@ -24,22 +26,22 @@ songs needed in m3u files to same output directory.
 
 Only playlists listed in "playlists_file" will be created in output directory. 
 It's best to create initial "playlists_file" with -i, then edit file 
-commenting out playlists to skip, then invoke again with -c.
+commenting out playlists to skip, then invoke again with -c to copy.
 
 	''')
 	p.add_option('-v', '--verbose', action ='store_true', default=False, help='returns verbose output')
-	p.add_option('-e', '--erase_unused', action ='store_true', default=False, help='Erase files in output_dir that are not used by m3u playlists')
-	p.add_option('-s', '--skip_empty_playlists', action ='store_true', default=False, help='Skip playlists that have 0 songs')
-	p.add_option('-d', '--db_file', help='Enqueue db file. Default: '+ DB_FILE, default=DB_FILE)
-	p.add_option('-o', '--output_dir', default=OUTPUT_DIR,
-	             help='directory that will contain newly created playlists and songs. Default: '+ OUTPUT_DIR)
+	p.add_option('--erase_unused', action ='store_true', default=False, help='Erase files in dest_dir that are not used by m3u playlists')
+	p.add_option('--skip_empty_playlists', action ='store_true', default=False, help='Skip playlists that have 0 songs')
+	p.add_option('--db_file', help='Enqueue db file. Default: '+ DB_FILE, default=DB_FILE)
+	p.add_option('--dest_dir', default=DESTINATION_DIR,
+	             help='directory that will contain newly created playlists and songs. Default: '+ DESTINATION_DIR)
 	p.add_option('-p', '--playlists_file', default=PLAYLISTS_FN, 
 	             help='File containing list of playlists to export, created using -c. Default: '+ PLAYLISTS_FN)
 	p.add_option('-i', '--initialize_playlists_file', action ='store_true', default=False,
 	             help='Initialize the "playlists_file" based on current playlists in Enqueue, '\
 	                 +'replacing any existing file.  Do not create any other files.')
 	p.add_option('-c', '--copy_playlists', action ='store_true', default=False,
-	             help='Copy to "output_dir" all playlists and needed songs from the "playlists_file".')
+	             help='Copy to "dest_dir" all playlists and needed songs from the "playlists_file".')
 	p.add_option('-m', '--m3u_only', action ='store_true', default=False,
 	             help='Only create playlist m3u files, do not copy any songs.')
 	p.add_option('--stats', action ='store_true', default=False, help='Output stats on Enqueue DB')
@@ -47,7 +49,7 @@ commenting out playlists to skip, then invoke again with -c.
 	options, arguments = p.parse_args()
 
 	nq = EnqueueWrapper(db_file              = options.db_file,
-	                    output_dir           = options.output_dir,
+	                    dest_dir             = options.dest_dir,
 	                    playlists_file       = options.playlists_file,
 	                    skip_empty_playlists = options.skip_empty_playlists,
 	                    erase_unused         = options.erase_unused,
@@ -68,11 +70,12 @@ class EnqueueWrapper(object):
 	def __init__(self, *initial_data, **kwargs):
 		# note names used in add_option() must match names used here
 		self.db_file              = DB_FILE
-		self.output_dir           = OUTPUT_DIR
+		self.dest_dir             = DESTINATION_DIR
 		self.playlists_file       = PLAYLISTS_FN
 		self.skip_playlists       = ('Music', 'Now Playing', 'Duplicate Files', 'Missing Files')
 		self.number_errors        = 0
 		self.playlists_to_copy    = []
+		self.fn_bytes             = {}
 		for dictionary in initial_data:
 			for key in dictionary:
 				setattr(self, key, dictionary[key])
@@ -122,7 +125,8 @@ class EnqueueWrapper(object):
 				continue
 			f.write("# %s contains %s songs\n%s\n" % (playlist_name, num_songs, playlist_name) )
 		f.close()
-		print "Created playlist file: "+ self.playlists_file
+		if self.verbose:
+			print "Created playlist file: "+ self.playlists_file
 
 	def readPlaylistFile(self):
 		self.playlists_to_copy = []
@@ -134,22 +138,26 @@ class EnqueueWrapper(object):
 				#print "matched '%s'" %  str(m.group(1))
 				self.playlists_to_copy.append( str(m.group(1)) )
 		f.close()
-		print "Found %s playlists to copy" % len(self.playlists_to_copy)
+		if self.verbose:
+			print "Found %s playlists to copy from: %s" % (len(self.playlists_to_copy), self.playlists_file)
 
 	def writeFiles(self):
-		print "Copying files to %s ..." % self.output_dir
+		if self.verbose:
+			print "Copying files to %s ..." % self.dest_dir
 		self.songs2copy = []
 		self.files_needed = []
 		self.copied_bytes = 0
 		self.needed_bytes = 0
 		self.unused_bytes = 0
-		self.existing_files = os.listdir(self.output_dir)
+		self.existing_dest_files = os.listdir(self.dest_dir)
 		
 		self.writeM3uFiles()
 		self.copySongs()
 		self.eraseUnused()
 		
-		print "output_dir has %s MB that is needed, %s MB was just copied." % \
+		if not self.verbose:
+			return
+		print "dest_dir has %s MB that is needed, %s MB was just copied." % \
 			(self.getMB(self.needed_bytes), self.getMB(self.copied_bytes))
 		if self.erase_unused:
 			print "Erased %s MB no longer needed." % self.getMB(self.unused_bytes)
@@ -173,7 +181,8 @@ class EnqueueWrapper(object):
 				self.number_errors += 1
 				print "Error: Skipping unknown playlist: "+ playlist_name
 				continue
-			print "Creating playlist: " + playlist_name
+			if self.verbose:
+				print "Creating playlist: " + playlist_name
 			m3u_fn = playlist_name + '.m3u'
 			m3u_text = "#EXTM3U - \"%s\" playlist generated by chad from Enqueue on %s \n\n" \
 			           % (playlist_name, now)
@@ -181,13 +190,13 @@ class EnqueueWrapper(object):
 				seconds = str( int(song['time']/1000) )
 				m3u_text += "# orig path: "+ song['path'] + "\n"
 				m3u_text += "#EXTINF:"+ seconds + ", "+ song['artist'] + " - "+ song['title'] + "\n"
-				m3u_text += self.getFilename(song['path']) + "\n\n"
+				m3u_text += self.dbPath2DestFn(song['path']) + "\n\n"
 				self.songs2copy.append( song['path'] )
 			try:
-				f = open(self.output_dir + m3u_fn, 'w')
+				f = open(self.dest_dir + m3u_fn, 'w')
 				f.write(m3u_text.encode('utf-8')) # encode from unicode to type str
 				f.close()
-				self.copied_bytes += self.getFileBytes( self.output_dir + m3u_fn )
+				self.copied_bytes += self.getFileBytes( self.dest_dir + m3u_fn )
 				self.files_needed.append(m3u_fn)
 			except Exception,e:
 				self.number_errors += 1
@@ -197,74 +206,79 @@ class EnqueueWrapper(object):
 
 	def copySongs(self):
 		# m3u files are written, now copy all necessary audio files
-		for remote_path in self.songs2copy:
-			local_fn = self.getFilename(remote_path)
-			self.files_needed.append(local_fn)
-			if local_fn in self.existing_files:
-				print "Not copying, already exists: " + self.output_dir + local_fn
+		for db_path in self.songs2copy:
+			dest_fn     = self.dbPath2DestFn(db_path)
+			src_path_fn = self.dbPath2SrcPathFn(db_path)
+			self.files_needed.append(dest_fn)
+			if dest_fn in self.existing_dest_files:
+				if self.verbose:
+					print "Not copying, already exists: " + self.dest_dir + dest_fn
 				continue
-			remote_fn = self.convertPath(remote_path)
-			print "    Copying file from: " + remote_fn
-			print "    Copying file to  : " + self.output_dir + local_fn + "\n"
-			self.needed_bytes += self.getFileBytes( remote_fn )
+			self.needed_bytes += self.getFileBytes( src_path_fn )
 			if self.m3u_only:
-				return
-			shutil.copy2(remote_fn, self.output_dir + local_fn) # copy2 preserves modification time, etc
-			self.copied_bytes += self.getFileBytes( self.output_dir + local_fn )
+				continue
+			if self.verbose:
+				print "    Copying file from: " + src_path_fn
+				print "    Copying file to  : " + self.dest_dir + dest_fn + "\n"
+			shutil.copy2(src_path_fn, self.dest_dir + dest_fn) # copy2 preserves modification time, etc
+			self.copied_bytes += self.getFileBytes( self.dest_dir + dest_fn )
 			'''
 			remote_fo = urllib2.urlopen(path)
-			with open(self.output_dir + local_fn, 'wb') as local_fo:
-				print "Copying to "+ local_fn
+			with open(self.dest_dir + dest_fn, 'wb') as local_fo:
+				print "Copying to "+ dest_fn
 				shutil.copyfileobj(remote_fo, local_fo)
 			'''
 
 	def eraseUnused(self):
 		# Check to remove files no longer used in output directory
-		for fn in self.existing_files:
+		for fn in self.existing_dest_files:
 			if fn in self.files_needed:
-				self.needed_bytes += self.getFileBytes( self.output_dir + fn )
-				print "File is needed: " + self.output_dir + fn
+				self.needed_bytes += self.getFileBytes( self.dest_dir + fn )
+				#print "File is needed: " + self.dest_dir + fn
 				continue
-			#full_file_name = os.path.join(self.output_dir, local_fn)
+			#full_file_name = os.path.join(self.dest_dir, dest_fn)
 		    #if (os.path.isfile(full_file_name)):
-			self.unused_bytes += self.getFileBytes( self.output_dir + fn )
+			self.unused_bytes += self.getFileBytes( self.dest_dir + fn )
 			if self.erase_unused:
-				print "Deleting file no longer needed: " + self.output_dir + fn
-				os.remove( self.output_dir + fn )
+				if self.verbose:
+					print "Deleting file no longer needed: " + self.dest_dir + fn
+				os.remove( self.dest_dir + fn )
 
 
-	def getFilename(self, path):
-		fn = re.sub(r'.*\/', '', path)
-		fn = urllib.unquote(fn)
-		#fn = re.sub(r'%20','_', fn)
-		# todo: add to file name something to guarantee file name is unique, like
+	def dbPath2DestFn(self, path):
+		path_fn_latin1 = self.dbPath2SrcPathFn(path)
+		path_fn_uni = path_fn_latin1.decode('latin-1')
+		# todo: add to file name something that will guarantee file name is unique, like
 		# size in bytes, modification time, or better yet - sha1 hash of file
 		unique_str = '00'
 		try:
-			statinfo = os.stat( self.convertPath(path) )
-			unique_str = str(statinfo.st_size) # size in bytes is fast and good enough for now
+			# size in bytes is fast and good enough for now
+			unique_str = self.getFileBytes( path_fn_latin1 )
 			#unique_str = base36(statinfo.st_size) 
 			#print "SIZE: bytes: %d, str: %s\n" % (statinfo.st_size, base36(statinfo.st_size))
 		except OSError, e:
 			self.number_errors += 1
 			print "OS Error: "+ str(e)
 			
+		fn = re.sub(r'.*\/', '', path_fn_uni) # remove path, leave only file name
 		fn = re.sub( r'^(.*)(\.[^\.]+)$', \
 			lambda m: "%s_%s%s" % (m.group(1), unique_str, m.group(2)), fn)
 		return fn
 
 
-	# converts 
-	def convertPath(self, path):
+	# converts path from Enqueue db (SQLite) to mac os file system path
+	def dbPath2SrcPathFn(self, path):
 		p = urlparse.urlparse(path)
 		if not p.scheme == 'file':
 			self.number_errors += 1
-			print "\nWARNING: FIX convertPath: "+ path
-		#fn = urllib.url2pathname(p.path)  # does not convert as expected
-		fn = urllib.url2pathname(p.path).encode('latin-1') # does work
-		#print "convertPath() Orig path: %s" % path
-		#print "convertPath() New path (%s): %s\n" % (type(fn), fn)
-		return fn
+			print "\nWARNING: FIX dbPath2SrcPathFn: "+ path
+		#path_fn = urllib.url2pathname(p.path)  # converts to unicode, does not work
+		path_fn = urllib.url2pathname(p.path).encode('latin-1') # does work
+		#path_fn = urllib.unquote(p.path)  
+		#print "dbPath2SrcPathFn() Orig path: %s" % path
+		#print "dbPath2SrcPathFn() New path (%s): %s" % (type(path_fn), path_fn)
+		return path_fn
+
 
 
 	def filesafe(self, name):
@@ -273,14 +287,22 @@ class EnqueueWrapper(object):
 		return name
 		
 	def getFileBytes(self, fn):
-		bytes = 0
+		if fn in self.fn_bytes:
+			return self.fn_bytes[fn]
+		self.fn_bytes[fn] = 0
 		try:
 			statinfo = os.stat( fn )
-			bytes = statinfo.st_size
-		except OSError, e:
-			self.number_errors += 1
-			print "Error: "+ str(e)
-		return bytes
+			self.fn_bytes[fn] = statinfo.st_size
+		except Exception, e:
+			print "getFileBytes() failed first try (%s): %s\n%s" % (type(fn), fn, traceback.format_exc())
+			try:
+				statinfo = os.stat( fn.encode('latin-1') )
+				self.fn_bytes[fn] = statinfo.st_size
+			except Exception, e:
+				#print "getFileBytes() failed second try (%s): %s" % (type(fn.encode('latin-1')), fn.encode('latin-1'))
+				self.number_errors += 1
+				print "getFileBytes() failed Second\n%s" % traceback.format_exc()
+		return self.fn_bytes[fn]
 
 
 	def getMB(self, int_x):
@@ -309,7 +331,6 @@ class EnqueueWrapper(object):
 			if row['title'] in self.skip_playlists:
 				continue
 			cur_playlist = []
-			#print "==> "+ row['title']
 			playlist_name = self._makeUnique(self.playlists_info, self.filesafe(row['title']))
 			c2 = conn.cursor()
 			for items in c2.execute("SELECT * FROM playlist_items WHERE playlist_id='%d' ORDER BY playlist_index" % row['playlist_id']):
@@ -318,9 +339,11 @@ class EnqueueWrapper(object):
 				song_info = c3.fetchone()
 				cur_playlist.append( song_info )
 			self.playlists_info[ playlist_name ] = cur_playlist
+
 		if not stats:
 			conn.close()
 			return
+
 		self.stats['total_playlists'] = len(rows_playlists)
 		c = conn.cursor()
 		c.execute('SELECT COUNT(*) FROM library')
@@ -334,7 +357,7 @@ class EnqueueWrapper(object):
 		self.stats['total_songs_gbytes'] = round(self.stats['total_songs_bytes']/(1024**3), 2)
 		self.stats['avg_song_size'] = round(self.stats['total_songs_bytes']/self.stats['total_songs'], 1)
 		self.stats['avg_song_time'] = round(self.stats['total_songs_time']/self.stats['total_songs'], 1)
-		print self.stats
+		pprint.pprint(self.stats)
 		conn.close()
 
 if __name__ == '__main__':
