@@ -6,6 +6,7 @@ import sqlite3
 import pprint
 import re
 import datetime
+import time
 #import urllib2
 import shutil
 
@@ -38,6 +39,9 @@ commenting out playlists to skip, then invoke again with -c.
 	                 +'replacing any existing file.  Do not create any other files.')
 	p.add_option('-c', '--copy_playlists', action ='store_true', default=False,
 	             help='Copy to "output_dir" all playlists and needed songs from the "playlists_file".')
+	p.add_option('-m', '--m3u_only', action ='store_true', default=False,
+	             help='Only create playlist m3u files, do not copy any songs.')
+	p.add_option('--stats', action ='store_true', default=False, help='Output stats on Enqueue DB')
 
 	options, arguments = p.parse_args()
 
@@ -46,8 +50,9 @@ commenting out playlists to skip, then invoke again with -c.
 	                    playlists_file       = options.playlists_file,
 	                    skip_empty_playlists = options.skip_empty_playlists,
 	                    erase_unused         = options.erase_unused,
+	                    m3u_only             = options.m3u_only,
 	                    verbose              = options.verbose)
-	nq.readDB()
+	nq.readDB(options.stats)
 	
 	if options.initialize_playlists_file:
 		nq.createPlaylistFile()
@@ -74,6 +79,16 @@ class EnqueueWrapper(object):
 			setattr(self, key, kwargs[key])
 
 
+	def _getDateTimeString(self, secs=None):
+		if time.daylight:
+			tz = time.tzname[1]
+		else:
+			tz = time.tzname[0]
+		#print str(datetime.datetime.utcnow()) + ' UTC ' + str(time.timezone) + tz
+		# use datetime to get microsecs, use time to get timezone and custom formatting
+		return time.strftime('%Y-%m-%d %A %I:%M:%S %p %Z', time.localtime())
+
+
 	def _makeUnique(self, dictionary, key, suffix=None):
 		key2 = key
 		if not suffix == None:
@@ -90,16 +105,16 @@ class EnqueueWrapper(object):
 
 	def createPlaylistFile(self):
 		f = open(self.playlists_file, 'w')
-		f.write( '''
-# Playlists file, generated from Enqueue on %s UTC
+		f.write( '''#
+# Playlists file, generated from Enqueue %s
 # 
 # Any line begining with a hash is a comment and is ignored.
-# Comment out or delete unwanted playlists.
-# If more than one playlist exists with the same name, a _v2 is appended.
+# Comment out or delete unwanted playlists. If a second playlist
+# exists with the same name, a _v2 is appended. If a third, a _v3, etc.
 # NOTE: playlist name must not begin with # or whitespace
 #
 ''' 
-			% str(datetime.datetime.utcnow()) )
+			% self._getDateTimeString() )
 		for playlist_name in sorted(self.playlists_info.keys()):
 			num_songs = len(self.playlists_info[playlist_name])
 			if self.skip_empty_playlists and (num_songs == 0):
@@ -122,13 +137,27 @@ class EnqueueWrapper(object):
 
 	def writeFiles(self):
 		print "Copying files to %s ..." % self.output_dir
-		songs2copy = []
-		files_needed = []
-		copied_bytes = 0
-		needed_bytes = 0
-		not_needed_bytes = 0
-		now = str(datetime.datetime.utcnow()) + ' UTC'
-		existing_files = os.listdir(self.output_dir)
+		self.songs2copy = []
+		self.files_needed = []
+		self.copied_bytes = 0
+		self.needed_bytes = 0
+		self.unused_bytes = 0
+		self.existing_files = os.listdir(self.output_dir)
+		
+		self.writeM3uFiles()
+		self.copySongs()
+		self.eraseUnused()
+		
+		print "output_dir has %s MB that is needed, %s MB was just copied." % \
+			(self.getMB(self.needed_bytes), self.getMB(self.copied_bytes))
+		if self.erase_unused:
+			print "Erased %s MB no longer needed." % self.getMB(self.unused_bytes)
+		else:
+			print "Could have erased %s MB no longer needed." % self.getMB(self.unused_bytes)
+		print "Done.  %s error(s)." % self.number_errors
+
+	def writeM3uFiles(self):
+		now = self._getDateTimeString()
 		'''  Example:
 		#EXTM3U - header - must be first line of file
 		#EXTINF - extra info - length (seconds), artist - title
@@ -152,30 +181,34 @@ class EnqueueWrapper(object):
 				m3u_text += "# orig path: "+ song['path'] + "\n"
 				m3u_text += "#EXTINF:"+ seconds + ", "+ song['artist'] + " - "+ song['title'] + "\n"
 				m3u_text += self.getFilename(song['path']) + "\n\n"
-				songs2copy.append( song['path'] )
+				self.songs2copy.append( song['path'] )
 			try:
 				f = open(self.output_dir + m3u_fn, 'w')
 				f.write(m3u_text)
 				f.close()
-				copied_bytes += self.getFileBytes( self.output_dir + m3u_fn )
-				files_needed.append(m3u_fn)
+				self.copied_bytes += self.getFileBytes( self.output_dir + m3u_fn )
+				self.files_needed.append(m3u_fn)
 			except Exception,e:
 				self.number_errors += 1
 				print "Error: "+ str(e)
 
+
+	def copySongs(self):
 		# m3u files are written, now copy all necessary audio files
-		for remote_path in songs2copy:
+		for remote_path in self.songs2copy:
 			local_fn = self.getFilename(remote_path)
-			files_needed.append(local_fn)
-			if local_fn in existing_files:
+			self.files_needed.append(local_fn)
+			if local_fn in self.existing_files:
 				print "Not copying, already exists: " + self.output_dir + local_fn
 				continue
-			remote_fn = self. convertPath(remote_path)
+			remote_fn = self.convertPath(remote_path)
 			print "    Copying file from: " + remote_fn
 			print "    Copying file to  : " + self.output_dir + local_fn + "\n"
+			self.needed_bytes += self.getFileBytes( remote_fn )
+			if self.m3u_only:
+				return
 			shutil.copy2(remote_fn, self.output_dir + local_fn) # copy2 preserves modification time, etc
-			copied_bytes += self.getFileBytes( self.output_dir + local_fn )
-			needed_bytes += self.getFileBytes( self.output_dir + local_fn )
+			self.copied_bytes += self.getFileBytes( self.output_dir + local_fn )
 			'''
 			remote_fo = urllib2.urlopen(path)
 			with open(self.output_dir + local_fn, 'wb') as local_fo:
@@ -183,25 +216,19 @@ class EnqueueWrapper(object):
 				shutil.copyfileobj(remote_fo, local_fo)
 			'''
 
+	def eraseUnused(self):
 		# Check to remove files no longer used in output directory
-		for fn in existing_files:
-			if fn in files_needed:
-				needed_bytes += self.getFileBytes( self.output_dir + fn )
+		for fn in self.existing_files:
+			if fn in self.files_needed:
+				self.needed_bytes += self.getFileBytes( self.output_dir + fn )
 				print "File is needed: " + self.output_dir + fn
 				continue
 			#full_file_name = os.path.join(self.output_dir, local_fn)
 		    #if (os.path.isfile(full_file_name)):
-			not_needed_bytes += self.getFileBytes( self.output_dir + fn )
+			self.unused_bytes += self.getFileBytes( self.output_dir + fn )
 			if self.erase_unused:
 				print "Deleting file no longer needed: " + self.output_dir + fn
 				os.remove( self.output_dir + fn )
-
-		print "output_dir has %s MB that is needed, %s MB was just copied." % (self.getMB(needed_bytes), self.getMB(copied_bytes))
-		if self.erase_unused:
-			print "Erased %s MB no longer needed." % self.getMB(not_needed_bytes)
-		else:
-			print "Could have erased %s MB no longer needed." % self.getMB(not_needed_bytes)
-		print "Done.  %s error(s)." % self.number_errors
 
 
 	def getFilename(self, path):
@@ -211,7 +238,7 @@ class EnqueueWrapper(object):
 		# size in bytes, modification time, or better yet - sha1 hash of file
 		unique_str = '00'
 		try:
-			statinfo = os.stat( self. convertPath(path) )
+			statinfo = os.stat( self.convertPath(path) )
 			unique_str = str(statinfo.st_size) # size in bytes is fast and good enough for now
 			#unique_str = base36(statinfo.st_size) 
 			#print "SIZE: bytes: %d, str: %s\n" % (statinfo.st_size, base36(statinfo.st_size))
@@ -255,7 +282,8 @@ class EnqueueWrapper(object):
 		return BASE36[int_x] + base36_x
 
 
-	def readDB(self):
+	def readDB(self, stats=False):
+		self.stats          = {}
 		self.playlists_info = {}
 		conn                = sqlite3.connect(self.db_file)
 		conn.row_factory    = sqlite3.Row # allows dictionary access, row['col_name']
@@ -275,6 +303,23 @@ class EnqueueWrapper(object):
 				song_info = c3.fetchone()
 				cur_playlist.append( song_info )
 			self.playlists_info[ playlist_name ] = cur_playlist
+		if not stats:
+			conn.close()
+			return
+		self.stats['total_playlists'] = len(rows_playlists)
+		c = conn.cursor()
+		c.execute('SELECT COUNT(*) FROM library')
+		self.stats['total_songs'] = c.fetchone()[0]
+		c = conn.cursor()
+		c.execute('SELECT SUM(size) FROM library')
+		self.stats['total_songs_bytes'] = c.fetchone()[0]
+		c = conn.cursor()
+		c.execute('SELECT SUM(time) FROM library')
+		self.stats['total_songs_time'] = c.fetchone()[0]
+		self.stats['total_songs_gbytes'] = round(self.stats['total_songs_bytes']/(1024**3), 2)
+		self.stats['avg_song_size'] = round(self.stats['total_songs_bytes']/self.stats['total_songs'], 1)
+		self.stats['avg_song_time'] = round(self.stats['total_songs_time']/self.stats['total_songs'], 1)
+		print self.stats
 		conn.close()
 
 if __name__ == '__main__':
