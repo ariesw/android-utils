@@ -1,0 +1,73 @@
+listing directory <type 'str'> non-ascii:  Found 3 files: 
+file 1: name length:5, <type 'str'>
+file 2: name length:21, <type 'str'>
+file 3: name length:10, <type 'str'>
+
+  try2match(obj) obj =      <type 'str'> :  ascii
+                                     obj : M <type 'str'> ascii - MATCH!!
+                     obj.decode('utf-8') : M <type 'unicode'> ascii - MATCH!!
+                     obj.decode('ascii') : M <type 'unicode'> ascii - MATCH!!
+                   obj.decode('latin-1') : M <type 'unicode'> ascii - MATCH!!
+                     obj.encode('utf-8') : M <type 'str'> ascii - MATCH!!
+                     obj.encode('ascii') : M <type 'str'> ascii - MATCH!!
+                   obj.encode('latin-1') : M <type 'str'> ascii - MATCH!!
+                     urllib.unquote(obj) : M <type 'str'> ascii - MATCH!!
+                       urllib.quote(obj) : M <type 'str'> ascii - MATCH!!
+       urllib.quote(obj.encode('utf-8')) : M <type 'str'> ascii - MATCH!!
+     urllib.quote(obj.encode('latin-1')) : M <type 'str'> ascii - MATCH!!
+
+  try2match(obj) obj =      <type 'str'> :  hôtel costes quatre
+                                     obj : M <type 'str'> hôtel costes quatre - No match
+                     obj.decode('utf-8') :   <type 'unicode'>   Error: eval failed
+                     obj.decode('ascii') :   Error: eval failed
+                   obj.decode('latin-1') :   <type 'unicode'>   Error: eval failed
+                     obj.encode('utf-8') :   Error: eval failed
+                     obj.encode('ascii') :   Error: eval failed
+                   obj.encode('latin-1') :   Error: eval failed
+                     urllib.unquote(obj) : M <type 'str'> hôtel costes quatre - No match
+                       urllib.quote(obj) :   <type 'str'> ho%CC%82tel%20costes%20quatre - MATCH!!
+       urllib.quote(obj.encode('utf-8')) :   Error: eval failed
+     urllib.quote(obj.encode('latin-1')) :   Error: eval failed
+
+  try2match(obj) obj =      <type 'str'> :  Lunático
+                                     obj : M <type 'str'> Lunático - No match
+                     obj.decode('utf-8') :   <type 'unicode'>   Error: eval failed
+                     obj.decode('ascii') :   Error: eval failed
+                   obj.decode('latin-1') :   <type 'unicode'>   Error: eval failed
+                     obj.encode('utf-8') :   Error: eval failed
+                     obj.encode('ascii') :   Error: eval failed
+                   obj.encode('latin-1') :   Error: eval failed
+                     urllib.unquote(obj) : M <type 'str'> Lunático - No match
+                       urllib.quote(obj) :   <type 'str'> Luna%CC%81tico - No match
+       urllib.quote(obj.encode('utf-8')) :   Error: eval failed
+     urllib.quote(obj.encode('latin-1')) :   Error: eval failed
+
+
+listing directory <type 'unicode'> non-ascii:  Found 3 files: 
+file 1: name length:5, <type 'unicode'>
+file 2: name length:20, <type 'unicode'>
+file 3: name length:9, <type 'unicode'>
+
+  try2match(obj) obj =  <type 'unicode'> :  ascii
+                                     obj : M <type 'unicode'> ascii - MATCH!!
+                     obj.decode('utf-8') : M <type 'unicode'> ascii - MATCH!!
+                     obj.decode('ascii') : M <type 'unicode'> ascii - MATCH!!
+                   obj.decode('latin-1') : M <type 'unicode'> ascii - MATCH!!
+                     obj.encode('utf-8') : M <type 'str'> ascii - MATCH!!
+                     obj.encode('ascii') : M <type 'str'> ascii - MATCH!!
+                   obj.encode('latin-1') : M <type 'str'> ascii - MATCH!!
+                     urllib.unquote(obj) : M <type 'unicode'> ascii - MATCH!!
+                       urllib.quote(obj) : M <type 'unicode'> ascii - MATCH!!
+       urllib.quote(obj.encode('utf-8')) : M <type 'str'> ascii - MATCH!!
+     urllib.quote(obj.encode('latin-1')) : M <type 'str'> ascii - MATCH!!
+
+  try2match(obj) obj =  <type 'unicode'> :  Error: 'ascii' codec can't encode character u'\u0302' in position 2: ordinal not in range(128)
+Traceback (most recent call last):
+  File "test.py", line 37, in listdir
+    try2match(file, matches)
+  File "test.py", line 46, in try2match
+    print obj
+UnicodeEncodeError: 'ascii' codec can't encode character u'\u0302' in position 2: ordinal not in range(128)
+
+
+
