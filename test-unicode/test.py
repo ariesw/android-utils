@@ -42,9 +42,9 @@ def listdir(path):
 		
 	print "\n"
 
+
 def try2match(obj, matches=None):
-	print "\n  try2match(obj) obj = %17s : " % type(obj),
-	print obj
+	print "\n%26s try2match(obj)" % ''
 	for _newobj in [ "obj", 
 		"obj.decode('utf-8')",
 		"obj.decode('ascii')",
