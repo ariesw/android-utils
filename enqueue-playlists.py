@@ -229,9 +229,15 @@ class EnqueueWrapper(object):
 			if dest_fn in self.existing_dest_files:
 				self.log.info("Not copying, already exists: " + dest_path_fn.encode('utf-8'))
 				continue
+			if self.getFileBytes( dest_path_fn, True ):
+				self.log.info("Not copying, just made a copy: " + dest_path_fn.encode('utf-8'))
+				continue
 			self.needed_bytes += self.getFileBytes( src_path_fn )
 			if self.m3u_only:
+				self.log.info("Not copying, m3u_only: " + dest_path_fn.encode('utf-8'))
 				continue
+			dest_bytes += self.getFileBytes( dest_path_fn )
+
 			self.log.info("    Copying file from: " + src_path_fn)
 			self.log.info("    Copying file to  : " + dest_path_fn + "\n")
 			shutil.copy2(src_path_fn, dest_path_fn) # copy2 preserves modification time, etc
@@ -309,22 +315,24 @@ class EnqueueWrapper(object):
 		name = re.sub(r'(/|\\)', '-', name)  
 		return name
 		
-	def getFileBytes(self, fn):
+	
+	def getFileBytes(self, fn, force_stat=False):
+		''' Returns number of bytes of fn if exists and stat succedes, 0 otherwise'''
+		if not force_stat:
 		if fn in self.fn_bytes:
 			return self.fn_bytes[fn]
 		self.fn_bytes[fn] = 0
 		try:
 			statinfo = os.stat( fn )
 			self.fn_bytes[fn] = statinfo.st_size
-		except Exception, e:
-			self.number_warnings += 1
-			self.log.warning("getFileBytes() failed first try (%s): %s\n%s" % (type(fn), fn, traceback.format_exc()))
-			try:
-				statinfo = os.stat( fn.encode('latin-1') )
-				self.fn_bytes[fn] = statinfo.st_size
+		except OSError, e:
+			if e.errno != 2:
+				# errno 2 is "No such file or directory"
+				self.log.warning(e)
+				self.log.warning("getFileBytes() warning (%s): %s\n%s" % (e.errno, fn, traceback.format_exc()))
 			except Exception, e:
 				self.number_errors += 1
-				self.log.error("getFileBytes() failed Second\n%s" % traceback.format_exc())
+			self.log.error("getFileBytes() error (%s): %s\n%s" % (type(fn), fn, traceback.format_exc()))
 		self.log.debug("SIZE: bytes: %d, str: %s, fn:%s" % (self.fn_bytes[fn], self.base36(self.fn_bytes[fn]), fn))
 		return self.fn_bytes[fn]
 
