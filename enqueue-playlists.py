@@ -41,7 +41,7 @@ commenting out playlists to skip, then invoke again with -c to copy.
 	p.add_option('--dest_dir', default=DESTINATION_DIR,
 	             help='directory that will contain newly created playlists and songs. Default: '+ DESTINATION_DIR)
 	p.add_option('-p', '--playlists_file', default=PLAYLISTS_FN, 
-	             help='File containing list of playlists to export, created using -c. Default: '+ PLAYLISTS_FN)
+	             help='File containing list of playlists to export, created using -i. Default: '+ PLAYLISTS_FN)
 	p.add_option('-i', '--initialize_playlists_file', action ='store_true', default=False,
 	             help='Initialize the "playlists_file" based on current playlists in Enqueue, '\
 	                 +'replacing any existing file.  Do not create any other files.')
@@ -49,7 +49,7 @@ commenting out playlists to skip, then invoke again with -c to copy.
 	             help='Copy to "dest_dir" all playlists from the "playlists_file", and songs referenced by them.')
 	p.add_option('-m', '--m3u_only', action ='store_true', default=False,
 	             help='Only create playlist m3u files, do not copy any songs.')
-	p.add_option('--stats', action ='store_true', default=False, help='Output stats on Enqueue DB')
+	p.add_option('--stats', action ='store_true', default=False, help='Output stats on the Enqueue DB')
 
 	options, arguments = p.parse_args()
 
@@ -91,6 +91,10 @@ class EnqueueWrapper(object):
 		# set dir to unicode so we get unicode names when doing listdir()
 		# more http://docs.python.org/howto/unicode.html#unicode-filenames
 		self.dest_dir = unicode(self.dest_dir, 'utf-8')
+		if not re.search( os.sep + '$', self.dest_dir):
+			self.dest_dir += os.sep
+		if not os.path.exists(self.dest_dir):
+			raise StandardError('dest_dir path does not exist: '+ self.dest_dir)
 		
 		if self.verbose:
 			logging.basicConfig(level=logging.INFO)
@@ -236,13 +240,13 @@ class EnqueueWrapper(object):
 			if self.m3u_only:
 				self.log.info("Not copying, m3u_only: " + dest_path_fn.encode('utf-8'))
 				continue
-			dest_bytes += self.getFileBytes( dest_path_fn )
 
 			self.log.info("    Copying file from: " + src_path_fn)
 			self.log.info("    Copying file to  : " + dest_path_fn + "\n")
 			shutil.copy2(src_path_fn, dest_path_fn) # copy2 preserves modification time, etc
-			self.copied_bytes += self.getFileBytes( dest_path_fn )
+			self.copied_bytes += self.getFileBytes( dest_path_fn, True )
 			'''
+			If enqueue ever supports music files on the web, http style, then use something like this:
 			remote_fo = urllib2.urlopen(path)
 			with open(self.dest_dir + dest_fn, 'wb') as local_fo:
 				print "Copying to "+ dest_fn
@@ -314,13 +318,13 @@ class EnqueueWrapper(object):
 		# no / or \ allowed in name
 		name = re.sub(r'(/|\\)', '-', name)  
 		return name
-		
+	
 	
 	def getFileBytes(self, fn, force_stat=False):
 		''' Returns number of bytes of fn if exists and stat succedes, 0 otherwise'''
 		if not force_stat:
-		if fn in self.fn_bytes:
-			return self.fn_bytes[fn]
+			if fn in self.fn_bytes:
+				return self.fn_bytes[fn]
 		self.fn_bytes[fn] = 0
 		try:
 			statinfo = os.stat( fn )
@@ -330,15 +334,15 @@ class EnqueueWrapper(object):
 				# errno 2 is "No such file or directory"
 				self.log.warning(e)
 				self.log.warning("getFileBytes() warning (%s): %s\n%s" % (e.errno, fn, traceback.format_exc()))
-			except Exception, e:
-				self.number_errors += 1
+		except Exception, e:
+			self.number_errors += 1
 			self.log.error("getFileBytes() error (%s): %s\n%s" % (type(fn), fn, traceback.format_exc()))
 		self.log.debug("SIZE: bytes: %d, str: %s, fn:%s" % (self.fn_bytes[fn], self.base36(self.fn_bytes[fn]), fn))
 		return self.fn_bytes[fn]
 
 
 	def getMB(self, int_x):
-		return str(round( int_x / (1024*1024), 1))
+		return str(round( int_x / (1024**2), 1))
 
 
 	def base36(self, int_x):
@@ -450,11 +454,14 @@ class EnqueueWrapper(object):
 		c = conn.cursor()
 		c.execute('SELECT SUM(time) FROM library')
 		self.stats['total_songs_time'] = c.fetchone()[0]
+		conn.close()
+
 		self.stats['total_songs_gbytes'] = round(self.stats['total_songs_bytes']/(1024**3), 2)
 		self.stats['avg_song_size'] = round(self.stats['total_songs_bytes']/self.stats['total_songs'], 1)
 		self.stats['avg_song_time'] = round(self.stats['total_songs_time']/self.stats['total_songs'], 1)
+		print "Stats on Enqueue Database - "+ self.db_file
 		pprint.pprint(self.stats)
-		conn.close()
+
 
 if __name__ == '__main__':
 	main()
