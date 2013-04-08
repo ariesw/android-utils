@@ -59,3 +59,11 @@ Here's a sample
 	
 	% time ./enqueue-playlists.py -v --dest_dir=/Volumes/BIONIC32GB/chadmedia -c --stats
 	 ....
+
+
+## Licence
+
+android-utils is released under the MIT license:
+
+* [http://www.opensource.org/licenses/MIT](http://www.opensource.org/licenses/MIT)
+
