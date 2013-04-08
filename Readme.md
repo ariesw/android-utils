@@ -67,3 +67,5 @@ android-utils is released under the MIT license:
 
 * [http://www.opensource.org/licenses/MIT](http://www.opensource.org/licenses/MIT)
 
+
+[![githalytics.com alpha](https://cruel-carlota.pagodabox.com/d6b93797ab1d55576a6f0d2a6f36beca "githalytics.com")](http://githalytics.com/chadn/android-utils)
